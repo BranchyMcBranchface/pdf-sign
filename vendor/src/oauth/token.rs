@@ -21,9 +21,9 @@ use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD as base64};
 
 use crate::errors::SigstoreError;
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(untagged)]
-enum Audience {
+pub enum Audience {
     Single(String),
     Multiple(Vec<String>),
 }
@@ -114,6 +114,14 @@ impl IdentityToken {
             now < exp
         } else {
             true
+        }
+    }
+
+    /// Returns whether the `aud` claim includes "sigstore".
+    pub fn has_sigstore_audience(&self) -> bool {
+        match &self.claims.aud {
+            Some(aud) => aud.contains_sigstore(),
+            None => false,
         }
     }
 }
