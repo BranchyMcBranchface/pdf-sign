@@ -36,14 +36,63 @@ impl Audience {
     }
 }
 
+/// Flexible deserialization helper for timestamp fields.
+/// Accepts both Unix timestamp (seconds) and ISO 8601 strings.
+mod flexible_timestamp {
+    use chrono::{DateTime, Utc};
+    use serde::{Deserialize, Deserializer};
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Timestamp {
+            Seconds(i64),
+            String(String),
+        }
+
+        match Timestamp::deserialize(deserializer)? {
+            Timestamp::Seconds(secs) => {
+                Ok(DateTime::<Utc>::from_timestamp(secs, 0).ok_or_else(|| {
+                    serde::de::Error::custom("invalid timestamp")
+                })?)
+            }
+            Timestamp::String(s) => {
+                DateTime::parse_from_rfc3339(&s)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .map_err(serde::de::Error::custom)
+            }
+        }
+    }
+
+    pub mod option {
+        use chrono::{DateTime, Utc};
+        use serde::{Deserialize, Deserializer};
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<DateTime<Utc>>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            Option::<i64>::deserialize(deserializer)?.map_or(Ok(None), |secs| {
+                DateTime::<Utc>::from_timestamp(secs, 0)
+                    .ok_or_else(|| serde::de::Error::custom("invalid timestamp"))
+                    .map(Some)
+            })
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct Claims {
     pub aud: Audience,
-    #[serde(with = "chrono::serde::ts_seconds")]
+    #[serde(deserialize_with = "flexible_timestamp::deserialize")]
     pub exp: DateTime<Utc>,
-    #[serde(with = "chrono::serde::ts_seconds_option")]
+    #[serde(deserialize_with = "flexible_timestamp::option::deserialize")]
     #[serde(default)]
     pub nbf: Option<DateTime<Utc>>,
+    #[serde(default)]
     pub email: Option<String>,
 }
 
