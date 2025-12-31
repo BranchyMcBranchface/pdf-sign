@@ -100,7 +100,6 @@ pub async fn sign_blob(data: &[u8], options: &SignOptions) -> Result<SignResult>
 
   // Obtain identity token
   let identity_token = if let Some(token) = &options.identity_token {
-    tracing::debug!("Using provided identity token");
     // Parse the raw JWT token directly, bypassing openidconnect's strict validation
     // which doesn't accept GitHub OIDC tokens. Fulcio will validate the token.
     let parsed = sigstore::oauth::IdentityToken::try_from(token.as_str())
@@ -111,7 +110,7 @@ pub async fn sign_blob(data: &[u8], options: &SignOptions) -> Result<SignResult>
       // Prefer a fresh GitHub Actions token (audience=sigstore) when available to avoid
       // mis-minted or stale tokens passed in by the caller.
       if let Some(fresh) = maybe_fetch_github_actions_token().await? {
-        warn!("Using GitHub Actions ID token with audience=sigstore (overrides provided token)");
+        tracing::debug!("Using GitHub Actions ID token with audience=sigstore (overrides provided token)");
         fresh
       } else if !parsed.has_sigstore_audience() {
         bail!(
@@ -127,19 +126,16 @@ pub async fn sign_blob(data: &[u8], options: &SignOptions) -> Result<SignResult>
       parsed
     }
   } else {
-    tracing::debug!("Starting interactive OIDC flow");
     obtain_identity_token(&options.endpoints).await?
   };
 
   // Create signing session
-  tracing::debug!("Creating signing session");
   let signing_session = signing_ctx
     .signer(identity_token)
     .await
     .context("Failed to create signing session")?;
 
   // Sign the data (need owned data for Cursor)
-  tracing::debug!("Signing data");
   let signing_artifact = signing_session
     .sign(std::io::Cursor::new(data.to_vec()))
     .await
@@ -189,6 +185,7 @@ struct GitHubIdTokenResponse {
 }
 
 /// If running inside GitHub Actions and provided token lacks the `sigstore` audience, fetch a new token.
+/// This helps avoid stale/mis-audienced tokens supplied by callers when the workflow already has `id-token: write`.
 #[cfg(not(target_arch = "wasm32"))]
 async fn maybe_fetch_github_actions_token(
 ) -> Result<Option<sigstore::oauth::IdentityToken>> {
@@ -359,6 +356,5 @@ async fn obtain_identity_token(
   .context("Timed out waiting for OIDC callback")?
   .context("Failed to obtain identity token")?;
 
-  tracing::debug!("Identity token obtained");
   Ok(sigstore::oauth::IdentityToken::from(token))
 }
