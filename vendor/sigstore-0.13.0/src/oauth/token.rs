@@ -133,14 +133,25 @@ impl TryFrom<&str> for IdentityToken {
             SigstoreError::IdentityTokenError("Malformed JWT".into()),
         ))?;
 
-        let claims = base64
+        let claims_bytes = base64
             .decode(parts[1])
             .or(Err(SigstoreError::IdentityTokenError(
                 "Malformed JWT: Unable to decode claims".into(),
             )))?;
-        let claims: Claims = serde_json::from_slice(&claims).or(Err(
-            SigstoreError::IdentityTokenError("Malformed JWT: claims JSON malformed".into()),
-        ))?;
+        
+        // Debug: log the raw claims JSON
+        let claims_str = String::from_utf8_lossy(&claims_bytes);
+        tracing::debug!("JWT claims payload (raw): {}", claims_str);
+        
+        let claims: Claims = serde_json::from_slice(&claims_bytes).or_else(|e| {
+            tracing::error!("Failed to parse claims: {}", e);
+            tracing::error!("Claims JSON: {}", claims_str);
+            Err(SigstoreError::IdentityTokenError(format!(
+                "Malformed JWT: claims JSON malformed - {}",
+                e
+            )))
+        })?;
+        
         if !claims.aud.contains_sigstore() {
             return Err(SigstoreError::IdentityTokenError(
                 "Not a Sigstore JWT".into(),
