@@ -73,4 +73,4 @@ codegen-units = 1
 strip = true
 
 [patch.crates-io]
-sigstore = { git = "https://github.com/BranchyMcBranchface/sigstore", branch = "v0.2" }
+sigstore = { path = "vendor" }
