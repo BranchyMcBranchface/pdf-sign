@@ -15,6 +15,7 @@
 use chrono::{DateTime, Utc};
 use openidconnect::core::CoreIdToken;
 use serde::Deserialize;
+use serde_json::Value;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD as base64};
 
@@ -42,58 +43,45 @@ mod flexible_timestamp {
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Deserializer};
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Timestamp {
-            Seconds(i64),
-            String(String),
-        }
-
-        match Timestamp::deserialize(deserializer)? {
-            Timestamp::Seconds(secs) => {
-                Ok(DateTime::<Utc>::from_timestamp(secs, 0).ok_or_else(|| {
-                    serde::de::Error::custom("invalid timestamp")
-                })?)
-            }
-            Timestamp::String(s) => {
-                DateTime::parse_from_rfc3339(&s)
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .map_err(serde::de::Error::custom)
-            }
-        }
-    }
-
     pub mod option {
-        use chrono::{DateTime, Utc};
-        use serde::{Deserialize, Deserializer};
+        use super::*;
 
         pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<DateTime<Utc>>, D::Error>
         where
             D: Deserializer<'de>,
         {
-            Option::<i64>::deserialize(deserializer)?.map_or(Ok(None), |secs| {
-                DateTime::<Utc>::from_timestamp(secs, 0)
-                    .ok_or_else(|| serde::de::Error::custom("invalid timestamp"))
+            #[derive(Deserialize)]
+            #[serde(untagged)]
+            enum Timestamp {
+                Seconds(i64),
+                String(String),
+                Null,
+            }
+
+            match Option::<Timestamp>::deserialize(deserializer)? {
+                None | Some(Timestamp::Null) => Ok(None),
+                Some(Timestamp::Seconds(secs)) => Ok(DateTime::<Utc>::from_timestamp(secs, 0)),
+                Some(Timestamp::String(s)) => DateTime::parse_from_rfc3339(&s)
+                    .map(|dt| dt.with_timezone(&Utc))
                     .map(Some)
-            })
+                    .map_err(serde::de::Error::custom),
+            }
         }
     }
 }
 
 #[derive(Deserialize)]
 pub struct Claims {
-    pub aud: Audience,
-    #[serde(deserialize_with = "flexible_timestamp::deserialize")]
-    pub exp: DateTime<Utc>,
-    #[serde(deserialize_with = "flexible_timestamp::option::deserialize")]
     #[serde(default)]
+    pub aud: Option<Audience>,
+    #[serde(default, deserialize_with = "flexible_timestamp::option::deserialize")]
+    pub exp: Option<DateTime<Utc>>,
+    #[serde(default, deserialize_with = "flexible_timestamp::option::deserialize")]
     pub nbf: Option<DateTime<Utc>>,
     #[serde(default)]
     pub email: Option<String>,
+    #[serde(default)]
+    pub raw: Value,
 }
 
 pub type UnverifiedClaims = Claims;
@@ -118,9 +106,16 @@ impl IdentityToken {
         let now = Utc::now();
 
         if let Some(nbf) = self.claims.nbf {
-            nbf <= now && now < self.claims.exp
+            if now < nbf {
+                return false;
+            }
+        }
+
+        if let Some(exp) = self.claims.exp {
+            now < exp
         } else {
-            now < self.claims.exp
+            // If no expiration is present, let Fulcio enforce validity.
+            true
         }
     }
 }
@@ -138,11 +133,11 @@ impl TryFrom<&str> for IdentityToken {
             .or(Err(SigstoreError::IdentityTokenError(
                 "Malformed JWT: Unable to decode claims".into(),
             )))?;
-        
-        // Debug: log the raw claims JSON
+
+        // Debug: log the raw claims JSON for troubleshooting OIDC issuer differences.
         let claims_str = String::from_utf8_lossy(&claims_bytes);
         tracing::debug!("JWT claims payload (raw): {}", claims_str);
-        
+
         let claims: Claims = serde_json::from_slice(&claims_bytes).or_else(|e| {
             tracing::error!("Failed to parse claims: {}", e);
             tracing::error!("Claims JSON: {}", claims_str);
@@ -151,11 +146,14 @@ impl TryFrom<&str> for IdentityToken {
                 e
             )))
         })?;
-        
-        if !claims.aud.contains_sigstore() {
-            return Err(SigstoreError::IdentityTokenError(
-                "Not a Sigstore JWT".into(),
-            ));
+
+        // If audience is present, ensure it includes "sigstore"; otherwise defer to Fulcio.
+        if let Some(aud) = &claims.aud {
+            if !aud.contains_sigstore() {
+                return Err(SigstoreError::IdentityTokenError(
+                    "Not a Sigstore JWT".into(),
+                ));
+            }
         }
 
         Ok(IdentityToken {
