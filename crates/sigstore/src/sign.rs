@@ -108,18 +108,15 @@ pub async fn sign_blob(data: &[u8], options: &SignOptions) -> Result<SignResult>
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-      if !parsed.has_sigstore_audience() {
-        // Attempt to re-request a GitHub Actions OIDC token with the correct audience.
-        if let Some(refreshed) = maybe_fetch_github_actions_token().await? {
-          warn!(
-            "Provided token missing 'sigstore' audience; fetched GitHub Actions ID token with audience=sigstore"
-          );
-          refreshed
-        } else {
-          bail!(
-            "Provided identity token is missing audience 'sigstore'. In GitHub Actions, request an ID token with audience=sigstore (set 'id-token: write' permission and fetch via ACTIONS_ID_TOKEN_REQUEST_URL)."
-          );
-        }
+      // Prefer a fresh GitHub Actions token (audience=sigstore) when available to avoid
+      // mis-minted or stale tokens passed in by the caller.
+      if let Some(fresh) = maybe_fetch_github_actions_token().await? {
+        warn!("Using GitHub Actions ID token with audience=sigstore (overrides provided token)");
+        fresh
+      } else if !parsed.has_sigstore_audience() {
+        bail!(
+          "Provided identity token is missing audience 'sigstore'. In GitHub Actions, request an ID token with audience=sigstore (set 'id-token: write' permission and fetch via ACTIONS_ID_TOKEN_REQUEST_URL)."
+        );
       } else {
         parsed
       }
