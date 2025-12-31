@@ -37,8 +37,7 @@ impl Audience {
     }
 }
 
-/// Flexible deserialization helper for timestamp fields.
-/// Accepts both Unix timestamp (seconds) and ISO 8601 strings.
+/// Flexible timestamp deserializer that accepts seconds, RFC3339, or null.
 mod flexible_timestamp {
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Deserializer};
@@ -114,7 +113,6 @@ impl IdentityToken {
         if let Some(exp) = self.claims.exp {
             now < exp
         } else {
-            // If no expiration is present, let Fulcio enforce validity.
             true
         }
     }
@@ -134,7 +132,6 @@ impl TryFrom<&str> for IdentityToken {
                 "Malformed JWT: Unable to decode claims".into(),
             )))?;
 
-        // Debug: log the raw claims JSON for troubleshooting OIDC issuer differences.
         let claims_str = String::from_utf8_lossy(&claims_bytes);
         tracing::debug!("JWT claims payload (raw): {}", claims_str);
 
@@ -147,7 +144,6 @@ impl TryFrom<&str> for IdentityToken {
             )))
         })?;
 
-        // If audience is present, ensure it includes "sigstore"; otherwise defer to Fulcio.
         if let Some(aud) = &claims.aud {
             if !aud.contains_sigstore() {
                 return Err(SigstoreError::IdentityTokenError(
