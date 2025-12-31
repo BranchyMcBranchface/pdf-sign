@@ -73,4 +73,4 @@ codegen-units = 1
 strip = true
 
 [patch.crates-io]
-sigstore = { path = "vendor/sigstore-0.13.0" }
+sigstore = { path = "vendor" }
