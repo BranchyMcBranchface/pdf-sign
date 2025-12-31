@@ -95,10 +95,10 @@ pub async fn sign_blob(data: &[u8], options: &SignOptions) -> Result<SignResult>
   // Obtain identity token
   let identity_token = if let Some(token) = &options.identity_token {
     tracing::debug!("Using provided identity token");
-    // Parse the raw JWT token
-    sigstore::oauth::IdentityToken::from(
-      openidconnect::IdToken::from_str(token).context("Failed to parse identity token")?,
-    )
+    // Parse the raw JWT token directly, bypassing openidconnect's strict validation
+    // which doesn't accept GitHub OIDC tokens. Fulcio will validate the token.
+    std::str::FromStr::from_str(token)
+      .context("Failed to parse identity token")?
   } else {
     tracing::debug!("Starting interactive OIDC flow");
     obtain_identity_token(&options.endpoints).await?
