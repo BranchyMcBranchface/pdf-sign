@@ -3,7 +3,7 @@
 use anyhow::{Context, Result, bail};
 use pdf_sign_core::{DigestAlgorithm, compute_digest, suffix::SigstoreBundleBlock};
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
+use std::convert::TryFrom;
 use std::time::Duration;
 
 /// Sigstore service endpoints configuration.
@@ -97,7 +97,7 @@ pub async fn sign_blob(data: &[u8], options: &SignOptions) -> Result<SignResult>
     tracing::debug!("Using provided identity token");
     // Parse the raw JWT token directly, bypassing openidconnect's strict validation
     // which doesn't accept GitHub OIDC tokens. Fulcio will validate the token.
-    std::str::FromStr::from_str(token)
+    sigstore::oauth::IdentityToken::try_from(token.as_str())
       .context("Failed to parse identity token")?
   } else {
     tracing::debug!("Starting interactive OIDC flow");
