@@ -13,6 +13,7 @@ use openidconnect::core::CoreIdToken;
 use reqwest::{Body, header};
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
+use serde_json;
 use std::fmt::{Debug, Display, Formatter};
 use url::Url;
 use x509_cert::{Certificate, der::Decode};
@@ -237,7 +238,27 @@ impl FulcioClient {
             })
             .send()
             .await?;
-        let response = response.json().await?;
+        let status = response.status();
+        let body = response.bytes().await?;
+        let body_text = String::from_utf8(body.clone().into_iter().collect())
+            .unwrap_or_else(|_| format!("non-utf8 body ({} bytes)", body.len()));
+        let body_snippet = body_text.chars().take(2048).collect::<String>();
+
+        if !status.is_success() {
+            return Err(SigstoreError::FulcioClientError(format!(
+                "Fulcio returned status {} with body: {}",
+                status.as_u16(),
+                body_snippet,
+            )));
+        }
+
+        let response: SigningCertificate =
+            serde_json::from_slice(&body).map_err(|err| SigstoreError::FulcioClientError(format!(
+                "Failed to decode Fulcio response (status {}): {}; body: {}",
+                status.as_u16(),
+                err,
+                body_snippet,
+            )))?;
 
         let (certs, detached_sct) = match response {
             SigningCertificate::SignedCertificateDetachedSct(ref sc) => {
